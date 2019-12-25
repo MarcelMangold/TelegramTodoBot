@@ -174,44 +174,70 @@ bot.command('show', async (ctx) => {
 
 })
 
-bot.command('done', (ctx) => {
-    const query = {
-        text: 'SELECT * FROM todo.todo WHERE todo.chat_id = $1 AND todo.is_finished = $2',
-        values: [ctx.update.message.chat.id, false]
+bot.command('done', async (ctx) => {
+    let chatId = ctx.update.message.chat.id;
+    const checkIfChatExist = {
+        text: 'SELECT * FROM todo.chat where id= $1',
+        values: [chatId]
     }
-    pool.query(query, (err, res) => {
-        if (err) {
-            throw err
-        }
-        const options = {
-            inline: true, // default
-            duplicates: false, // default
-            newline: false, // default
-        };
+    const addChat = {
+        text: 'INSERT INTO todo.chat (id) VALUES ($1)',
+        values: [chatId]
+    }
 
-        const keyboard = new Keyboard(options);
-        let row = [];
-        let rows = [];
-        let columnCount = 0;
-        for (let i = 0; i < res.rows.length; i++) {
-            ++columnCount;
-            let string = res.rows[i].name + ":action" + res.rows[i].id;
-
-            row.push(string)
-            if (columnCount == 2) {
-                rows.push(row);
-                row = [];
-                columnCount = 0;
+    let response = await pool.query(checkIfChatExist);
+    if (response.rowCount == 0) {
+        pool.query(addChat, (err, res) => {
+            if (err) {
+                throw err
             }
+        })
+        ctx.replyWithHTML('<b>Currently there are no open todos</b>');
+    }
+    else {
+        const query = {
+            text: 'SELECT * FROM todo.todo WHERE todo.chat_id = $1 AND todo.is_finished = $2',
+            values: [ctx.update.message.chat.id, false]
+        }
+        pool.query(query, (err, res) => {
+            if (err) {
+                throw err
+            }
+            if (res.rowCount > 0) {
+                const options = {
+                    inline: true, // default
+                    duplicates: false, // default
+                    newline: false, // default
+                };
 
-        };
-        rows.forEach(element => {
-            keyboard
-                .add(element)
-        });
+                const keyboard = new Keyboard(options);
+                let row = [];
+                let rows = [];
+                let columnCount = 0;
+                for (let i = 0; i < res.rows.length; i++) {
+                    ++columnCount;
+                    let string = res.rows[i].name + ":action" + res.rows[i].id;
 
-        ctx.reply('Open todos (to set a todo as done, click on it):', keyboard.draw());
-    })
+                    row.push(string)
+                    if (columnCount == 2) {
+                        rows.push(row);
+                        row = [];
+                        columnCount = 0;
+                    }
+
+                };
+                rows.forEach(element => {
+                    keyboard
+                        .add(element)
+                });
+
+                ctx.reply('Open todos (to set a todo as done, click on it):', keyboard.draw());
+            }
+            else {
+                ctx.replyWithHTML('<b>Currently there are no open todos</b>');
+            }
+        })
+    }
 })
 
 const regex = new RegExp('action[0-9]');
