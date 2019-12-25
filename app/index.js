@@ -5,6 +5,7 @@ const Markup = require('telegraf/markup');
 const WizardScene = require("telegraf/scenes/wizard");
 const session = require("telegraf/session");
 const Stage = require("telegraf/stage");
+const Keyboard = require('telegraf-keyboard');
 
 const { Pool } = require('pg')
 const pool = new Pool(databaseConnection)
@@ -20,13 +21,14 @@ bot.catch((err, ctx) => {
 
 bot.start(
     (ctx) => ctx.reply(
-        `How can I help you, ${ctx.from.first_name}?`,
-        Markup.inlineKeyboard(
-            [
-                Markup.callbackButton("add", "add_todo"),
-                Markup.callbackButton("show list", "SHOW_LIST")
-            ]
-        ).extra()
+        /*         `How can I help you, ${ctx.from.first_name}?`,
+                Markup.inlineKeyboard(
+                    [
+                        Markup.callbackButton("add", "add_todo"),
+                        Markup.callbackButton("show list", "SHOW_LIST"),
+                        Markup.callbackButton("set item(s) to done", "DONE")
+                    ]
+                ).extra()*/
     )
 );
 
@@ -85,6 +87,7 @@ const addTodo = new WizardScene(
             response = await pool.query(insertTodoQuery);
         }
         catch (err) {
+            console.log(err);
 
         }
 
@@ -123,7 +126,55 @@ bot.action('SHOW_LIST', async (ctx) => {
     })
 })
 
-bot.command('show', (ctx) => {
+bot.command('show', async (ctx) => {
+    let chatId = ctx.update.message.chat.id;
+    const checkIfChatExist = {
+        text: 'SELECT * FROM todo.chat where id= $1',
+        values: [chatId]
+    }
+    const addChat = {
+        text: 'INSERT INTO todo.chat (id) VALUES ($1)',
+        values: [chatId]
+    }
+
+    let response = await pool.query(checkIfChatExist);
+    if (response.rowCount == 0) {
+        pool.query(addChat, (err, res) => {
+            if (err) {
+                throw err
+            }
+        })
+        ctx.replyWithHTML('<b>Currently there are no open todos</b>');
+    }
+    else {
+        const query = {
+            text: 'SELECT * FROM todo.todo WHERE todo.chat_id = $1 AND todo.is_finished = $2',
+            values: [chatId, false]
+        }
+        try {
+            pool.query(query, (err, res) => {
+                if (err) {
+                    throw err;
+                }
+                let htmlText = '<b>Currently there are no open todos</b>';
+                if (res.rows.length > 0) {
+                    htmlText = '<b>Open todos:</b>';
+                    for (let i = 0; i < res.rows.length; i++) {
+                        htmlText += `\n ${i + 1} - ${res.rows[i].name}`;
+                    }
+                }
+                ctx.replyWithHTML(htmlText);
+
+            })
+        } catch (err) {
+            logger.error(err.error);
+            ctx.replyWithHTML("Error while reading todos");
+        };
+    }
+
+})
+
+bot.command('done', (ctx) => {
     const query = {
         text: 'SELECT * FROM todo.todo WHERE todo.chat_id = $1 AND todo.is_finished = $2',
         values: [ctx.update.message.chat.id, false]
@@ -132,22 +183,83 @@ bot.command('show', (ctx) => {
         if (err) {
             throw err
         }
-        let htmlText = '<b>Currently there are no open todos</b>';
-        if (res.rows.length > 0) {
-            htmlText = '<b>Open todos:</b>';
-            for (let i = 0; i < res.rows.length; i++) {
-                htmlText += `\n ${i + 1} - ${res.rows[i].name}`;
+        const options = {
+            inline: true, // default
+            duplicates: false, // default
+            newline: false, // default
+        };
+
+        const keyboard = new Keyboard(options);
+        let row = [];
+        let rows = [];
+        let columnCount = 0;
+        for (let i = 0; i < res.rows.length; i++) {
+            ++columnCount;
+            let string = res.rows[i].name + ":action" + res.rows[i].id;
+
+            row.push(string)
+            if (columnCount == 2) {
+                rows.push(row);
+                row = [];
+                columnCount = 0;
             }
-        }
-        ctx.replyWithHTML(htmlText);
+
+        };
+        rows.forEach(element => {
+            keyboard
+                .add(element)
+        });
+
+        ctx.reply('Open todos (to set a todo as done, click on it):', keyboard.draw());
     })
 })
+
+const regex = new RegExp('action[0-9]');
+
+bot.action(regex, (ctx) => {
+    let actionData = ctx.update.callback_query.data;
+    let rows = ctx.update.callback_query.message.reply_markup.inline_keyboard;
+    let selectedItem = null;
+
+    rows.forEach(row => {
+        row.forEach(column => {
+            if (column.callback_data == actionData) {
+                selectedItem = column.text;
+                return;
+            }
+        });
+        if (selectedItem != null)
+            return
+    });
+
+
+
+    const query = {
+        text: 'UPDATE todo.todo SET is_finished=true WHERE id = $1',
+        values: [actionData.replace("action", "")]
+    }
+    pool.query(query, (err, res) => {
+        if (err) {
+            throw err
+        }
+        if (res.rowCount == 1)
+            ctx.reply(`${selectedItem} is done`);
+        else
+            ctx.reply(`Error when setting the value ${selectedItem} as done`);
+    });
+
+
+
+
+}
+);
+
 bot.action('add_todo', (ctx) => {
     Stage.enter(addTodo)
 }
 );
 
-const stage = new Stage([addTodo], {default:'add_todo'});
+const stage = new Stage([addTodo]);
 
 bot.use(session());
 bot.use(stage.middleware());
