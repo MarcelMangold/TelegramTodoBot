@@ -1,6 +1,7 @@
 const { botToken, databaseConnection } = require('./config/config');
 const logger = require('./helpers/logger');
 const Telegraf = require('telegraf');
+const Extra = require('telegraf/extra');
 const Markup = require('telegraf/markup');
 const WizardScene = require("telegraf/scenes/wizard");
 const session = require("telegraf/session");
@@ -15,21 +16,32 @@ const pool = new Pool(databaseConnection)
 const bot = new Telegraf(botToken)
 
 bot.catch((err, ctx) => {
-    console.log(`Ooops, ecountered an error for ${ctx.updateType}`, err)
     logger.error(`Ooops, ecountered an error for ${ctx.updateType}`, err)
 })
 
 bot.start(
     (ctx) => ctx.reply(
-        /*         `How can I help you, ${ctx.from.first_name}?`,
-                Markup.inlineKeyboard(
-                    [
-                        Markup.callbackButton("add", "add_todo"),
-                        Markup.callbackButton("show list", "SHOW_LIST"),
-                        Markup.callbackButton("set item(s) to done", "DONE")
-                    ]
-                ).extra()*/
+        `Hello ${ctx.from.first_name}, welcome to the todo Bot!\nBelow me you see the available options with which you can interact with me.`,
+        Markup.inlineKeyboard(
+            [
+                Markup.callbackButton("add", "ADD_TODO"),
+                Markup.callbackButton("show list", "SHOW_LIST"),
+                Markup.callbackButton("set todo(s) to done", "DONE")
+            ]
+        ).extra()
     )
+);
+
+bot.command('options', async (ctx) => ctx.reply(
+    `These are the available options for interacting with the bot:`,
+    Markup.inlineKeyboard(
+        [
+            Markup.callbackButton("add todo", "ADD_TODO"),
+            Markup.callbackButton("show todolist", "SHOW_LIST"),
+            Markup.callbackButton("set todo(s) to done", "DONE")
+        ]
+    ).extra()
+)
 );
 
 const addTodo = new WizardScene(
@@ -87,8 +99,7 @@ const addTodo = new WizardScene(
             response = await pool.query(insertTodoQuery);
         }
         catch (err) {
-            console.log(err);
-
+            logger.error(err);
         }
 
         ctx.wizard.state.item = ctx.message.text;
@@ -174,8 +185,15 @@ bot.command('show', async (ctx) => {
 
 })
 
-bot.command('done', async (ctx) => {
-    let chatId = ctx.update.message.chat.id;
+bot.command('done', (ctx) => {
+    setItemsDone(ctx, ctx.update.message.chat.id);
+})
+
+bot.action('DONE', (ctx) => {
+    setItemsDone(ctx, ctx.update.callback_query.message.chat.id);
+})
+
+async function setItemsDone(ctx, chatId) {
     const checkIfChatExist = {
         text: 'SELECT * FROM todo.chat where id= $1',
         values: [chatId]
@@ -197,7 +215,7 @@ bot.command('done', async (ctx) => {
     else {
         const query = {
             text: 'SELECT * FROM todo.todo WHERE todo.chat_id = $1 AND todo.is_finished = $2',
-            values: [ctx.update.message.chat.id, false]
+            values: [chatId, false]
         }
         pool.query(query, (err, res) => {
             if (err) {
@@ -226,6 +244,7 @@ bot.command('done', async (ctx) => {
                     }
 
                 };
+                rows.push(row);
                 rows.forEach(element => {
                     keyboard
                         .add(element)
@@ -238,7 +257,7 @@ bot.command('done', async (ctx) => {
             }
         })
     }
-})
+}
 
 const regex = new RegExp('action[0-9]');
 
@@ -248,17 +267,16 @@ bot.action(regex, (ctx) => {
     let selectedItem = null;
 
     rows.forEach(row => {
-        row.forEach(column => {
+        row.forEach((column, index, object) => {
             if (column.callback_data == actionData) {
                 selectedItem = column.text;
+                object.splice(index, 1);
                 return;
             }
         });
         if (selectedItem != null)
             return
     });
-
-
 
     const query = {
         text: 'UPDATE todo.todo SET is_finished=true WHERE id = $1',
@@ -268,8 +286,15 @@ bot.action(regex, (ctx) => {
         if (err) {
             throw err
         }
-        if (res.rowCount == 1)
-            ctx.reply(`${selectedItem} is done`);
+        if (res.rowCount == 1) {
+
+
+            ctx.reply(`${selectedItem} is done`, Extra.markup(Markup.removeKeyboard()));
+            ctx.editMessageReplyMarkup({
+                inline_keyboard: rows
+
+            });
+        }
         else
             ctx.reply(`Error when setting the value ${selectedItem} as done`);
     });
@@ -280,14 +305,21 @@ bot.action(regex, (ctx) => {
 }
 );
 
-bot.action('add_todo', (ctx) => {
-    Stage.enter(addTodo)
-}
-);
-
 const stage = new Stage([addTodo]);
 
 bot.use(session());
 bot.use(stage.middleware());
+
+bot.command('add', async ({ reply, scene }) => {
+    await scene.leave()
+    await scene.enter('add_todo')
+}
+);
+
+bot.action('ADD_TODO', async ({ reply, scene }) => {
+    await scene.leave()
+    await scene.enter('add_todo')
+}
+);
 
 bot.launch()
