@@ -13,8 +13,8 @@ methods.executeQuery = function (text, values) {
             await client.end();
             resolve(res);
         } catch (err) {
-            logger.error('executePreparedStatement: ' + JSON.stringify(err) + ' - queryConfig:' + queryConfig.text);
-            reject(err + ', SQL-Statement: ' + queryConfig.text);
+            logger.error('executePreparedStatement: ' + JSON.stringify(err) + ' - queryConfig:' + text + "- values:" + values);
+            reject(err + ', SQL-Statement: ' + text);
         }
     });
 }
